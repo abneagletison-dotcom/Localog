@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa Nisia - SpeedNET</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { font-family: sans-serif; margin: 0; background: #f4f4f4; }
+        #map { height: 45vh; width: 100%; border-bottom: 3px solid #004a8d; }
+        .container { padding: 15px; max-width: 450px; margin: auto; }
+        .card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; }
+        input, button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 5px; border: 1px solid #ccc; box-sizing: border-box; font-size: 16px; }
+        button { background: #004a8d; color: white; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; }
+        button:hover { background: #003366; }
+        .btn-google { background: #db4437; margin-top: 10px; }
+        .btn-whatsapp { background: #25D366; margin-top: 15px; text-decoration: none; display: block; color: white; padding: 12px; border-radius: 5px; font-weight: bold; }
+        .footer-info { margin-top: 25px; font-size: 14px; color: #555; line-height: 1.6; }
+        .footer-info a { color: #E1306C; text-decoration: none; font-weight: bold; }
+        #loading { display: none; color: #004a8d; font-weight: bold; margin: 10px 0; }
+        hr { border: 0; border-top: 1px solid #eee; margin: 20px 0; }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="container">
+    <div id="login-area" class="card">
+        <h3>Acesso Mapa Nisia</h3>
+        <input type="email" id="email" placeholder="E-mail">
+        <input type="password" id="password" placeholder="Senha">
+        <button onclick="fazerLogin()">Entrar com E-mail</button>
+        
+        <div style="margin: 10px 0; color: #666;">ou</div>
+        
+        <button class="btn-google" onclick="loginGoogle()">Entrar com Google G</button>
+
+        <hr>
+        
+        <div class="footer-info">
+            <p>Aplicativo criado por <strong>Abne Agletison</strong></p>
+            <a href="https://wa.me/5584987099439?text=Quero%20acesso%20ao%20app%20de%20localizações" class="btn-whatsapp" target="_blank">
+                COMPRAR ACESSO (WhatsApp)
+            </a>
+            <p style="margin-top: 15px;">Siga no Instagram: <a href="https://instagram.com/Agletison" target="_blank">@Agletison</a></p>
+        </div>
+    </div>
+
+    <div id="app-area" class="card" style="display:none;">
+        <input type="text" id="nome-busca" placeholder="🔍 Buscar morador..." oninput="filtrarMarcadores()" style="background: #eef;">
+        <hr>
+        <h3>Novo Registro 📍</h3>
+        <input type="text" id="nome" placeholder="Nome do Cliente">
+        <input type="tel" id="whatsapp" placeholder="WhatsApp">
+        <input type="file" id="foto" accept="image/*">
+        <div id="loading">Processando... aguarde ⏳</div>
+        <button style="background: #25D366;" id="btn-salvar" onclick="salvarLocalizacao()">📍 Salvar Localização Atual</button>
+        <button onclick="firebase.auth().signOut()" style="background:#666; font-size:12px; margin-top:20px;">Sair da Conta</button>
+    </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-storage-compat.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+    // Configuração com sua API KEY real do print
+    const firebaseConfig = {
+      apiKey: "AIzaSyBuVx3VYGHF97hU9-CSLa-FmSbxFYIH20A", 
+      authDomain: "mapanisia.firebaseapp.com",
+      projectId: "mapanisia",
+      storageBucket: "mapanisia.firebasestorage.app",
+      messagingSenderId: "429106374611",
+      appId: "1:429106374611:web:b0fc107917f26bec3cb126"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const storage = firebase.storage();
+    const auth = firebase.auth();
+
+    const map = L.map('map').setView([-6.0886, -35.2111], 14);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    let marcadoresAtivos = [];
+
+    auth.onAuthStateChanged(user => {
+        if (user) {
+            document.getElementById('login-area').style.display = 'none';
+            document.getElementById('app-area').style.display = 'block';
+            carregarDados();
+        } else {
+            document.getElementById('login-area').style.display = 'block';
+            document.getElementById('app-area').style.display = 'none';
+        }
+    });
+
+    async function fazerLogin() {
+        const email = document.getElementById('email').value;
+        const pass = document.getElementById('password').value;
+        try { await auth.signInWithEmailAndPassword(email, pass); } 
+        catch (e) { alert("Erro no Login: " + e.message); }
+    }
+
+    async function loginGoogle() {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        try { await auth.signInWithPopup(provider); } 
+        catch (e) { alert("Erro Google: Verifique se ativou o provedor Google e o e-mail de suporte no Firebase."); }
+    }
+
+    async function salvarLocalizacao() {
+        const nome = document.getElementById('nome').value;
+        const whats = document.getElementById('whatsapp').value;
+        const arquivo = document.getElementById('foto').files[0];
+        
+        if (!nome || !whats) return alert("Preencha o nome e o WhatsApp!");
+
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('btn-salvar').disabled = true;
+
+        navigator.geolocation.getCurrentPosition(async (pos) => {
+            try {
+                const { latitude, longitude } = pos.coords;
+                let url = "";
+                if (arquivo) {
+                    const ref = storage.ref(`fotos/${Date.now()}_${arquivo.name}`);
+                    await ref.put(arquivo);
+                    url = await ref.getDownloadURL();
+                }
+                await db.collection("pontos").add({
+                    nome, whatsapp: whats.replace(/\D/g,''), foto: url,
+                    lat: latitude, lng: longitude, data: new Date()
+                });
+                alert("Salvo com sucesso!");
+                location.reload();
+            } catch (err) {
+                alert("Erro ao salvar.");
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('btn-salvar').disabled = false;
+            }
+        });
+    }
+
+    function carregarDados() {
+        db.collection("pontos").onSnapshot(snap => {
+            marcadoresAtivos.forEach(m => map.removeLayer(m.marker));
+            marcadoresAtivos = [];
+            snap.forEach(doc => {
+                const d = doc.data();
+                const marker = L.marker([d.lat, d.lng]).addTo(map)
+                    .bindPopup(`<b>${d.nome}</b><br><a href="https://wa.me/55${d.whatsapp}" target="_blank">WhatsApp</a>`);
+                marcadoresAtivos.push({ nome: d.nome.toLowerCase(), marker });
+            });
+        });
+    }
+
+    function filtrarMarcadores() {
+        const busca = document.getElementById('nome-busca').value.toLowerCase();
+        marcadoresAtivos.forEach(m => {
+            if (m.nome.includes(busca)) { m.marker.addTo(map); } 
+            else { map.removeLayer(m.marker); }
+        });
+    }
+</script>
+</body>
+</html>
