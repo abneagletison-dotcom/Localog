@@ -17,6 +17,7 @@
         .btn-whatsapp { background: #25D366; margin-top: 15px; text-decoration: none; display: block; color: white; padding: 12px; border-radius: 5px; font-weight: bold; }
         .footer-info { margin-top: 25px; font-size: 14px; color: #555; line-height: 1.6; }
         .footer-info a { color: #E1306C; text-decoration: none; font-weight: bold; }
+        .toggle-btn { background: none; color: #004a8d; border: none; text-decoration: underline; font-size: 14px; cursor: pointer; width: auto; padding: 5px; }
         #loading { display: none; color: #004a8d; font-weight: bold; margin: 10px 0; }
         hr { border: 0; border-top: 1px solid #eee; margin: 20px 0; }
     </style>
@@ -26,18 +27,25 @@
 <div id="map"></div>
 
 <div class="container">
-    <div id="login-area" class="card">
-        <h3>Acesso Mapa Nisia</h3>
+    <div id="auth-area" class="card">
+        <h3 id="auth-title">Acesso Mapa Nisia</h3>
         <input type="email" id="email" placeholder="E-mail">
         <input type="password" id="password" placeholder="Senha">
-        <button onclick="fazerLogin()">Entrar com E-mail</button>
+        
+        <div id="login-buttons">
+            <button onclick="fazerLogin()">Entrar</button>
+            <p>Não tem conta? <button class="toggle-btn" onclick="toggleAuth(true)">Criar uma agora</button></p>
+        </div>
+
+        <div id="register-buttons" style="display:none;">
+            <button style="background: #28a745;" onclick="criarConta()">Cadastrar e Entrar</button>
+            <p>Já tem conta? <button class="toggle-btn" onclick="toggleAuth(false)">Voltar ao Login</button></p>
+        </div>
         
         <div style="margin: 10px 0; color: #666;">ou</div>
-        
         <button class="btn-google" onclick="loginGoogle()">Entrar com Google G</button>
 
         <hr>
-        
         <div class="footer-info">
             <p>Aplicativo criado por <strong>Abne Agletison</strong></p>
             <a href="https://wa.me/5584987099439?text=Quero%20acesso%20ao%20app%20de%20localizações" class="btn-whatsapp" target="_blank">
@@ -54,7 +62,7 @@
         <input type="text" id="nome" placeholder="Nome do Cliente">
         <input type="tel" id="whatsapp" placeholder="WhatsApp">
         <input type="file" id="foto" accept="image/*">
-        <div id="loading">Processando... aguarde ⏳</div>
+        <div id="loading">Salvando localização... ⏳</div>
         <button style="background: #25D366;" id="btn-salvar" onclick="salvarLocalizacao()">📍 Salvar Localização Atual</button>
         <button onclick="firebase.auth().signOut()" style="background:#666; font-size:12px; margin-top:20px;">Sair da Conta</button>
     </div>
@@ -67,7 +75,6 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-    // Configuração com sua API KEY real do print
     const firebaseConfig = {
       apiKey: "AIzaSyBuVx3VYGHF97hU9-CSLa-FmSbxFYIH20A", 
       authDomain: "mapanisia.firebaseapp.com",
@@ -87,13 +94,19 @@
 
     let marcadoresAtivos = [];
 
+    function toggleAuth(isRegister) {
+        document.getElementById('auth-title').innerText = isRegister ? "Criar Nova Conta" : "Acesso Mapa Nisia";
+        document.getElementById('login-buttons').style.display = isRegister ? "none" : "block";
+        document.getElementById('register-buttons').style.display = isRegister ? "block" : "none";
+    }
+
     auth.onAuthStateChanged(user => {
         if (user) {
-            document.getElementById('login-area').style.display = 'none';
+            document.getElementById('auth-area').style.display = 'none';
             document.getElementById('app-area').style.display = 'block';
             carregarDados();
         } else {
-            document.getElementById('login-area').style.display = 'block';
+            document.getElementById('auth-area').style.display = 'block';
             document.getElementById('app-area').style.display = 'none';
         }
     });
@@ -102,52 +115,53 @@
         const email = document.getElementById('email').value;
         const pass = document.getElementById('password').value;
         try { await auth.signInWithEmailAndPassword(email, pass); } 
-        catch (e) { alert("Erro no Login: " + e.message); }
+        catch (e) { alert("Erro: " + e.message); }
+    }
+
+    async function criarConta() {
+        const email = document.getElementById('email').value;
+        const pass = document.getElementById('password').value;
+        if(pass.length < 6) return alert("A senha deve ter pelo menos 6 dígitos!");
+        try { 
+            await auth.createUserWithEmailAndPassword(email, pass); 
+            alert("Conta criada com sucesso!");
+        } catch (e) { alert("Erro ao criar conta: " + e.message); }
     }
 
     async function loginGoogle() {
         const provider = new firebase.auth.GoogleAuthProvider();
         try { await auth.signInWithPopup(provider); } 
-        catch (e) { alert("Erro Google: Verifique se ativou o provedor Google e o e-mail de suporte no Firebase."); }
+        catch (e) { alert("Erro no Google Login."); }
     }
 
     async function salvarLocalizacao() {
         const nome = document.getElementById('nome').value;
         const whats = document.getElementById('whatsapp').value;
         const arquivo = document.getElementById('foto').files[0];
-        
-        if (!nome || !whats) return alert("Preencha o nome e o WhatsApp!");
+        if (!nome || !whats) return alert("Preencha os campos obrigatórios!");
 
         document.getElementById('loading').style.display = 'block';
-        document.getElementById('btn-salvar').disabled = true;
-
         navigator.geolocation.getCurrentPosition(async (pos) => {
             try {
-                const { latitude, longitude } = pos.coords;
                 let url = "";
                 if (arquivo) {
-                    const ref = storage.ref(`fotos/${Date.now()}_${arquivo.name}`);
+                    const ref = storage.ref(`fotos/${Date.now()}`);
                     await ref.put(arquivo);
                     url = await ref.getDownloadURL();
                 }
                 await db.collection("pontos").add({
                     nome, whatsapp: whats.replace(/\D/g,''), foto: url,
-                    lat: latitude, lng: longitude, data: new Date()
+                    lat: pos.coords.latitude, lng: pos.coords.longitude, data: new Date()
                 });
-                alert("Salvo com sucesso!");
+                alert("Localização salva!");
                 location.reload();
-            } catch (err) {
-                alert("Erro ao salvar.");
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('btn-salvar').disabled = false;
-            }
+            } catch (err) { alert("Erro ao salvar dados."); }
         });
     }
 
     function carregarDados() {
         db.collection("pontos").onSnapshot(snap => {
             marcadoresAtivos.forEach(m => map.removeLayer(m.marker));
-            marcadoresAtivos = [];
             snap.forEach(doc => {
                 const d = doc.data();
                 const marker = L.marker([d.lat, d.lng]).addTo(map)
